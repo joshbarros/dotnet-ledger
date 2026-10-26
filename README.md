@@ -119,11 +119,23 @@ curl -s -X POST http://127.0.0.1:5212/api/payments/<id>/reversal \
 
 A payment is validated at the door: reference required (at most 40 characters), 1 to 5,000,000 cents. The poison match is a case-sensitive substring: `INV-POISON-7` and any longer token containing `POISON` match.
 
+## Develop with Nx
+
+The repository is an Nx workspace (`nx.json`, plugin `@nx/dotnet`). `npx nx show projects` lists `api` (the ASP.NET Core monolith), `web` (the Angular app) and the inferred xUnit project.
+
+```bash
+docker compose up -d --wait db kafka rabbitmq   # the brokers and Postgres, not the app
+npx nx serve api                                # http://localhost:5212
+npx nx serve web                                # http://localhost:4292, proxies /api to the API
+WEB_URL=http://localhost:4292 npx playwright test   # the same browser specs, against the dev servers
+npx nx build web && npx nx build api            # what CI builds
+```
+
 ## What is tested, and where it runs
 
 - **xUnit against real Postgres** (`tests/api`, 26 tests): two tasks with two `DbContext`s fight for funds that cover only one payment (one `Held`, one `Short`, available 0, no hold for the loser); empty input, over-limit input, integer overflow (including `long.MaxValue`, and fee arithmetic that must throw rather than wrap), the fee, the poison substring; the same message delivered twice is claimed once; a release returns the funds once; the poison rejection is committed before the dead-letter; a reversal followed by the late final mark leaves the payment `Reversed` and the receipt `Issued`. The race test was run against a read-then-write version of the debit, where it failed, and against the conditional update, where it passes.
 - **`scripts/smoke.sh`** drives the composed stack with a run id on every code, so a kept volume does not collide: validation, the happy path (fee, receipt, Kafka log), three concurrent payments against funds that cover one (one settled, two short, no hold for the losers), the poison reference (rejected, `receipts.work.dlq` gains one message, funds restored), and a reversal that lands between the receipt and the final mark (payment `Reversed`, receipt `Issued`, funds back, second reversal `409`). To make that last window wide enough to hit on purpose, Compose sets `Payments__FinalMarkDelayMs=1500`; it is a latency knob and defaults to 0.
-- **Playwright** (`e2e/specs/send-payment.spec.ts`): opens an account in the UI, sends a payment, sees `Settled`, the receipt number and the new balance, reloads to prove the page reads the API and keeps nothing in `localStorage`, then reverses and sees the balance come back. It runs against the composed web port, on a developer machine.
+- **Playwright** (`e2e/specs/send-payment.spec.ts`): opens an account in the UI, sends a payment, sees `Settled`, the receipt number and the new balance, reloads to prove the page reads the API and keeps nothing in `localStorage`, then reverses and sees the balance come back. It runs against the composed web port, on a developer machine. A second spec, `e2e/specs/ui-flows.spec.ts`, drives the page through the refusal messages (over-limit, empty reference, duplicate), the poison rejection, the loser of a race for the last of the scarce number, and the Kafka event log panel. Both specs pass against the Compose stack and against the Nx dev servers.
 - **CI** (`.github/workflows/ci.yml`, on push): `npm ci`, Prettier check, `dotnet format whitespace --verify-no-changes`, `dotnet test` with a Postgres 17 service, and `nx build` for web and api. CI does not run the compose smoke or the Playwright spec.
 
 ## API

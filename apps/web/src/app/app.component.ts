@@ -76,26 +76,28 @@ export class AppComponent implements OnInit {
 
   async openAccount(): Promise<void> {
     await this.run(async () => {
+      const code = this.code();
       const account = await this.api.openAccount({
-        code: this.code(),
+        code,
         holder: this.holder(),
         currency: this.currency(),
         branch: this.branch(),
         openingCents: Number(this.capacity()),
       });
-      this.code.set('');
+      if (this.code() === code) this.code.set('');
       this.selectedCode.set(account.code);
     });
   }
 
   async book(): Promise<void> {
     await this.run(async () => {
+      const reference = this.reference();
       await this.api.book({
         accountCode: this.selectedCode(),
-        reference: this.reference(),
+        reference,
         amountCents: Number(this.amountCents()),
       });
-      this.reference.set('');
+      if (this.reference() === reference) this.reference.set('');
     });
   }
 
