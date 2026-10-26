@@ -212,3 +212,4 @@ Nx 23.2.1 orchestrates `nx build web` and `nx build api`; EF Core migrations are
 
 - [dotnet-freight](https://github.com/joshbarros/dotnet-freight): container space on ocean sailings.
 - [dotnet-clinic](https://github.com/joshbarros/dotnet-clinic): appointment slots in a provider session.
+- [dotnet-warehouse](https://github.com/joshbarros/dotnet-warehouse): warehouse stock and outbound orders.
