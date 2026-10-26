@@ -227,3 +227,4 @@ Nx 23.2.1 orchestrates `nx build web` and `nx build api`; EF Core migrations are
 - [dotnet-clinic](https://github.com/joshbarros/dotnet-clinic): appointment slots in a provider session.
 - [dotnet-warehouse](https://github.com/joshbarros/dotnet-warehouse): warehouse stock and outbound orders.
 - [dotnet-academy](https://github.com/joshbarros/dotnet-academy): course cohort seats and enrollments.
+- [dotnet-compute](https://github.com/joshbarros/dotnet-compute): GPU-hour reservations in a pool.
