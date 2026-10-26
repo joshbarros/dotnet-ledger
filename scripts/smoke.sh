@@ -12,17 +12,23 @@ say() { printf '  %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 jget() { python3 -c "import sys,json; d=json.load(sys.stdin); print(d$1)"; }
 
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@ledger.local}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-LedgerAdmin2026}"
+CUSTOMER_PASSWORD="Smoke-Passw0rd1"
+code_of() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+token_of() { python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])"; }
+
 open_account() { # code openingCents -> prints nothing
-  curl -sf -X POST "$API/api/accounts" -H "$JSON" \
+  curl -sf -X POST "$API/api/accounts" -H "$JSON" -H "$ADM" \
     -d "{\"code\":\"$1\",\"holder\":\"Smoke Treasury\",\"currency\":\"USD\",\"branch\":\"Main Branch\",\"openingCents\":$2}" >/dev/null \
     || fail "could not open account $1"
 }
 send() { # code reference amountCents -> prints payment id
-  curl -sf -X POST "$API/api/payments" -H "$JSON" \
+  curl -sf -X POST "$API/api/payments" -H "$JSON" -H "$CUS" \
     -d "{\"accountCode\":\"$1\",\"reference\":\"$2\",\"amountCents\":$3}" | jget "['id']"
 }
-payment_field() { curl -sf "$API/api/payments/$1" | jget "['$2']"; }
-remaining() { curl -sf "$API/api/accounts/$1" | jget "['availableCents']"; }
+payment_field() { curl -sf -H "$ADM" "$API/api/payments/$1" | jget "['$2']"; }
+remaining() { curl -sf -H "$ADM" "$API/api/accounts/$1" | jget "['availableCents']"; }
 
 wait_for() { # description command... : polls up to 30s until the command succeeds
   local what="$1"; shift
@@ -35,11 +41,25 @@ wait_for() { # description command... : polls up to 30s until the command succee
 status_is() { [ "$(payment_field "$1" status)" = "$2" ]; }
 remaining_is() { [ "$(remaining "$1")" = "$2" ]; }
 terminal() { case "$(payment_field "$1" status)" in Settled|Rejected|Reversed) return 0 ;; *) return 1 ;; esac; }
-event_types() { curl -sf "$API/api/payments/$1/events" | python3 -c "import sys,json; print(' '.join(e['type'] for e in json.load(sys.stdin)))"; }
+event_types() { curl -sf -H "$ADM" "$API/api/payments/$1/events" | python3 -c "import sys,json; print(' '.join(e['type'] for e in json.load(sys.stdin)))"; }
 dlq_is() { [ "$(dlq_count)" = "$1" ]; }
 dlq_count() { curl -sf -u platform:platform "$RABBIT/api/queues/%2F/receipts.work.dlq" | jget "['messages']"; }
 
 curl -sf "$API/api/health" >/dev/null || fail "API is not healthy at $API; run: docker compose up --build --wait"
+
+echo "0. authentication and ownership"
+[ "$(code_of "$API/api/accounts")" = 401 ] || fail "an anonymous request should be 401"
+[ "$(code_of -X POST "$API/api/auth/login" -H "$JSON" -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"wrong-Passw0rd\"}")" = 401 ] || fail "a wrong password should be 401"
+ADM="Authorization: Bearer $(curl -sf -X POST "$API/api/auth/login" -H "$JSON" -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | token_of)" || fail "the administrator could not sign in"
+CUS="Authorization: Bearer $(curl -sf -X POST "$API/api/auth/register" -H "$JSON" -d "{\"email\":\"smoke-$RUN@example.com\",\"password\":\"$CUSTOMER_PASSWORD\"}" | token_of)" || fail "could not register a customer"
+OTHER="Authorization: Bearer $(curl -sf -X POST "$API/api/auth/register" -H "$JSON" -d "{\"email\":\"other-$RUN@example.com\",\"password\":\"$CUSTOMER_PASSWORD\"}" | token_of)"
+[ "$(code_of -X POST "$API/api/accounts" -H "$JSON" -H "$CUS" -d '{"code":"X"}')" = 403 ] || fail "a customer must not open accounts"
+open_account "A-$RUN" 5
+IDA="$(send "A-$RUN" "PAY-$RUN-OWN" 1)"
+[ "$(code_of -H "$OTHER" "$API/api/payments/$IDA")" = 404 ] || fail "another customer must get 404 for someone else's payment"
+[ "$(code_of -H "$CUS" "$API/api/payments/$IDA/events")" = 403 ] || fail "the event log is staff only"
+[ "$(code_of -X POST -H "$OTHER" "$API/api/payments/$IDA/reversal")" = 404 ] || fail "another customer must not reverse it"
+say "401 anonymous, 401 bad password, 403 customer opening a account, 404 for another customer, 403 on the event log"
 
 echo "1. input is validated at the door"
 open_account "V-$RUN" 1000000
@@ -49,7 +69,7 @@ for body in \
   "{\"accountCode\":\"V-$RUN\",\"reference\":\"R-$RUN\",\"amountCents\":5000001}" \
   "{\"accountCode\":\"V-$RUN\",\"reference\":\"R-$RUN\",\"amountCents\":4294967297}" \
   "{\"accountCode\":\"V-$RUN\",\"reference\":\"R-$RUN\",\"amountCents\":9223372036854775807}"; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/payments" -H "$JSON" -d "$body")"
+  code="$(code_of -X POST "$API/api/payments" -H "$JSON" -H "$CUS" -d "$body")"
   [ "$code" = 400 ] || fail "expected 400 for $body, got $code"
 done
 say "empty, zero, over-limit and overflowing amounts are all 400"
@@ -59,7 +79,7 @@ open_account "H-$RUN" 100000
 ID="$(send "H-$RUN" "PAY-$RUN-1" 30000)"
 wait_for "payment to be Settled" status_is "$ID" Settled
 [ "$(payment_field "$ID" feeCents)" = 200 ] || fail "fee should be 50 cents + 0.5% of 30000 = 200"
-[ "$(curl -sf "$API/api/receipts/$ID" | jget "['status']")" = Issued ] || fail "receipt not issued"
+[ "$(curl -sf -H "$ADM" "$API/api/receipts/$ID" | jget "['status']")" = Issued ] || fail "receipt not issued"
 wait_for "available cents to be 69800" remaining_is "H-$RUN" 69800
 TYPES="$(event_types "$ID")"
 for t in funds.reserve funds.held receipt.issued; do
@@ -95,7 +115,7 @@ IDP="$(send "P-$RUN" "PAY-POISON-$RUN" 20000)"
 wait_for "poison payment to be Rejected" status_is "$IDP" Rejected
 wait_for "available cents to be restored to 50000" remaining_is "P-$RUN" 50000
 wait_for "receipts.work.dlq to gain one message" dlq_is $((BEFORE + 1))
-[ "$(curl -sf "$API/api/receipts/$IDP" | jget "['status']")" = Rejected ] || fail "rejection should be committed on the receipt row"
+[ "$(curl -sf -H "$ADM" "$API/api/receipts/$IDP" | jget "['status']")" = Rejected ] || fail "rejection should be committed on the receipt row"
 [ "$(payment_field "$IDP" fundsReleasedAt)" != None ] || fail "payment should record the release"
 say "rejected, dead-lettered (+1 in receipts.work.dlq), available back to 50000"
 
@@ -105,21 +125,21 @@ WON=0
 for attempt in 1 2 3; do
   IDR="$(send "R-$RUN" "PAY-$RUN-R$attempt" 20000)"
   # The receipt exists before the payment is marked Settled (the final mark is delayed in compose).
-  wait_for "receipt to exist" curl -sf "$API/api/receipts/$IDR"
+  wait_for "receipt to exist" curl -sf -H "$ADM" "$API/api/receipts/$IDR"
   if status_is "$IDR" Held; then WON=1; break; fi
   say "window missed on attempt $attempt (payment already Settled); the reversal still has to hold; retrying"
-  curl -sf -X POST "$API/api/payments/$IDR/reversal" >/dev/null || true
+  curl -sf -X POST -H "$CUS" "$API/api/payments/$IDR/reversal" >/dev/null || true
   wait_for "payment to be Reversed" status_is "$IDR" Reversed
 done
 [ "$WON" = 1 ] || fail "never caught the payment between receipt issued and final mark"
-curl -sf -X POST "$API/api/payments/$IDR/reversal" >/dev/null || fail "reversal was refused"
+curl -sf -X POST -H "$CUS" "$API/api/payments/$IDR/reversal" >/dev/null || fail "reversal was refused"
 wait_for "payment to be Reversed" status_is "$IDR" Reversed
 sleep 3 # longer than the final-mark delay: the late mark must not undo the reversal
 status_is "$IDR" Reversed || fail "the final mark overwrote the reversal"
-[ "$(curl -sf "$API/api/receipts/$IDR" | jget "['status']")" = Issued ] || fail "the issued receipt was rolled back"
+[ "$(curl -sf -H "$ADM" "$API/api/receipts/$IDR" | jget "['status']")" = Issued ] || fail "the issued receipt was rolled back"
 [ "$(payment_field "$IDR" receiptNumber)" = None ] || fail "the late final mark should have been skipped"
 wait_for "funds to come back" remaining_is "R-$RUN" 60000
-code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/payments/$IDR/reversal")"
+code="$(code_of -X POST -H "$CUS" "$API/api/payments/$IDR/reversal")"
 [ "$code" = 409 ] || fail "second reversal should be 409, got $code"
 say "payment Reversed, receipt still Issued, available 60000, second reversal 409"
 
