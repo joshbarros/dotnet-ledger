@@ -33,7 +33,7 @@ export class WorkspaceComponent implements OnInit {
   readonly holder = signal('Acme Treasury');
   readonly currency = signal('USD');
   readonly branch = signal('Main Branch');
-  readonly capacity = signal('100000');
+  readonly opening = signal('100000');
 
   readonly reference = signal('');
   readonly amountCents = signal('10000');
@@ -85,7 +85,7 @@ export class WorkspaceComponent implements OnInit {
         holder: this.holder(),
         currency: this.currency(),
         branch: this.branch(),
-        openingCents: Number(this.capacity()),
+        openingCents: Number(this.opening()),
       });
       if (this.code() === code) this.code.set('');
       this.selectedCode.set(account.code);

@@ -109,7 +109,7 @@ Needs Node 22 (npm 10), .NET SDK 10.0.401 (`global.json`), Docker (arm64 is fine
 
 ```bash
 npm ci
-dotnet test tests/Ledger.UnitTests   # 124 tests, no Docker
+dotnet test tests/Ledger.UnitTests   # 125 tests, no Docker
 docker compose up -d --wait db        # the integration tests use Postgres on 5472 (database ledger_test)
 docker compose exec db createdb -U ledger ledger_test   # once
 dotnet test tests/Ledger.IntegrationTests
@@ -178,7 +178,7 @@ npx nx build web && npx nx build api            # what CI builds
 
 ## What is tested, and where it runs
 
-- **Unit tests** (`tests/Ledger.UnitTests`, 124 tests, no Docker, about 3 seconds): the payment rules and fee, the poison rule including integer overflow, token creation and validation, password and lockout behaviour of the auth service on an in-memory store, owner-or-staff access, the retry policy and topology, message serialization, the outbox `DbContext` conventions, and the HTTP middleware (problem details are `application/problem+json`, security headers, correlation ids).
+- **Unit tests** (`tests/Ledger.UnitTests`, 125 tests, no Docker, about 3 seconds): the payment rules and fee, the poison rule including integer overflow, token creation and validation, password and lockout behaviour of the auth service on an in-memory store, owner-or-staff access, the retry policy and topology, message serialization, the outbox `DbContext` conventions, and the HTTP middleware (problem details are `application/problem+json`, security headers, correlation ids).
 - **Integration tests** (`tests/Ledger.IntegrationTests`, 67 tests, real Postgres): the funds race (two tasks, two `DbContext`s, one unit: one `Held`, one `Short`, no hold for the loser) and the check constraint behind it; the saga handlers against the real schema (duplicate delivery claimed once, a release returns the funds once, the poison rejection committed before the dead-letter, reversal then late final mark); and the **whole HTTP pipeline** through `WebApplicationFactory`: register, login, wrong password, lockout, expired and tampered tokens, refresh rotation, replay revoking the family, two concurrent refreshes (exactly one wins), logout, the same-currency header, the auth rate limit, and 401/403/404 for every route and ownership case. The race test was run against a read-then-write version of the debit, where it failed, and against the conditional update, where it passes.
 - **`scripts/smoke.sh`** drives the composed stack: authentication and ownership first (401, 403, 404), then validation, the happy path (fee, receipt, Kafka log), the last funds with three concurrent payments, the poison reference (rejected, `receipts.work.dlq` gains one message, funds restored), and a reversal that lands between the receipt and the final mark. To make that last window wide enough to hit on purpose, Compose sets `Payments__FinalMarkDelayMs=1500`; it is a latency knob and defaults to 0.
 - **Playwright** (`e2e/specs`, 14 tests, Chromium): `auth.spec.ts` (anonymous sees only the form, wrong password, password policy, a customer books and sees only their own payments with no staff controls, sign-out, the session surviving a reload through the cookie while `document.cookie` stays empty); `send-payment.spec.ts` (open an account, send, receipt, reload, reverse); `ui-flows.spec.ts` (refusal messages, the poison rejection, the loser of a race, the Kafka event log). They run against the composed web port and against the Nx dev servers.

@@ -3,10 +3,10 @@ import { ADMIN, signIn } from './support';
 
 const run = () => Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1000);
 
-async function openAccount(page: Page, code: string, capacity: number, shown: string) {
+async function openAccount(page: Page, code: string, opening: number, shown: string) {
   await signIn(page, ADMIN);
   await page.getByLabel('Account code').fill(code);
-  await page.getByLabel('Opening balance (cents)').fill(String(capacity));
+  await page.getByLabel('Opening balance (cents)').fill(String(opening));
   await page.getByRole('button', { name: 'Open account' }).click();
   await expect(page.getByRole('heading', { name: `Send a payment from ${code}` })).toBeVisible();
   await expect(page.getByTestId('selected-remaining')).toHaveText(shown);
