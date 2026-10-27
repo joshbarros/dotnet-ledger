@@ -63,7 +63,7 @@ public class PaymentService(PaymentsDbContext db, IAccountCatalog accounts, ICur
         return payment;
     }
 
-    public async Task<List<Payment>> ListAsync(string? accountCode, CancellationToken ct)
+    public async Task<(List<Payment> Items, int Total)> ListAsync(string? accountCode, int page, int pageSize, CancellationToken ct)
     {
         var query = db.Payments.AsNoTracking();
         if (!user.IsStaff)
@@ -73,7 +73,9 @@ public class PaymentService(PaymentsDbContext db, IAccountCatalog accounts, ICur
         }
         if (!string.IsNullOrWhiteSpace(accountCode))
             query = query.Where(b => b.AccountCode == accountCode);
-        return await query.OrderByDescending(b => b.CreatedAt).Take(100).ToListAsync(ct);
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderByDescending(b => b.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
     }
 
     /// <summary>Moves Held or Settled to Reversed and asks Accounts to give the funds back. The receipt is not touched.</summary>

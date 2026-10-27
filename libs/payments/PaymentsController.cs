@@ -19,10 +19,14 @@ public class PaymentsController(PaymentService service, KafkaLog kafka) : Contro
         return Accepted($"/api/payments/{payment.Id}", PaymentDto.From(payment));
     }
 
-    /// <summary>Your payments. Staff see everyone's.</summary>
+    /// <summary>Your payments, newest first, a page at a time (default 100, at most 100). Staff see everyone's. The total is in X-Total-Count.</summary>
     [HttpGet]
-    public async Task<IEnumerable<PaymentDto>> List([FromQuery] string? accountCode, CancellationToken ct) =>
-        (await service.ListAsync(accountCode, ct)).Select(PaymentDto.From);
+    public async Task<IEnumerable<PaymentDto>> List([FromQuery] string? accountCode, [FromQuery] int page = 1, [FromQuery] int pageSize = 100, CancellationToken ct = default)
+    {
+        var (items, total) = await service.ListAsync(accountCode, Math.Max(page, 1), Math.Clamp(pageSize, 1, 100), ct);
+        Response.Headers["X-Total-Count"] = total.ToString();
+        return items.Select(PaymentDto.From);
+    }
 
     [HttpGet("{id:guid}")]
     public async Task<PaymentDto> Get(Guid id, CancellationToken ct) => PaymentDto.From(await service.GetAsync(id, ct));

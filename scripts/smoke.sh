@@ -133,6 +133,16 @@ wait_for "receipts.work.dlq to gain one message" dlq_is $((BEFORE + 1))
 [ "$(payment_field "$IDP" fundsReleasedAt)" != None ] || fail "payment should record the release"
 say "rejected, dead-lettered (+1 in receipts.work.dlq), available back to 50000"
 
+echo "4b. dead letters can be listed by staff only, and replayed"
+[ "$(code_of -H "$CUS" "$API/api/admin/dead-letters")" = 403 ] || fail "dead letters are staff only"
+curl -sf -H "$ADM" "$API/api/admin/dead-letters" | python3 -c "import sys,json; q={x['queue']:x for x in json.load(sys.stdin)}; assert q['receipts.work']['count']>=1, q" || fail "the dead-letter queue should list the poison message"
+BEFORE_REPLAY="$(dlq_count)"
+REPLAYED="$(curl -sf -X POST -H "$ADM" "$API/api/admin/dead-letters/receipts.work/replay?max=100" | jget "['replayed']")" || fail "replay failed"
+[ "$REPLAYED" -ge 1 ] || fail "replay should have taken at least one message"
+# The poison reference still fails for the same reason, so it is retried and dead-lettered again: replay is for fixed causes.
+wait_for "the replayed poison message to be dead-lettered again" dlq_is "$BEFORE_REPLAY"
+say "listed, replayed $REPLAYED, dead-lettered again because the cause is still there"
+
 echo "5. reversal races the final mark: the reversal wins, the issued receipt stays"
 open_account "R-$RUN" 60000
 WON=0
